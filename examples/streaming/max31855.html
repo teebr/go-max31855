@@ -1,0 +1,135 @@
+<html>
+
+<head>
+    <meta charset="utf-8">
+    <link href="css/bootstrap.min.css" rel="stylesheet">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/3.4.0/css/bootstrap.min.css">
+    <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.4.0/jquery.min.js"></script>
+    <script src="https://maxcdn.bootstrapcdn.com/bootstrap/3.4.0/js/bootstrap.min.js"></script>
+    <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+</head>
+
+<script>
+    ws = new WebSocket("ws://".concat(location.hostname, ":8081/sensor"));
+
+    // state variables
+    var x = [];
+    var y1 = [];
+    var y2 = [];
+    var isPaused = false;
+
+    // graph options
+    var timeWindowSeconds = 60;
+    var sampleTimeMilliseconds = 500;
+
+    var layout = {
+        title: 'MAX31855 Temperatures',
+        yaxis: { title: 'Temperature (deg C)' },
+    };
+
+    // open websocket and initialise plot
+    ws.onopen = function () {
+        // Web Socket is connected, send data using send()
+        var data = [
+            {
+                x: x,
+                y: y1,
+                type: "lines",
+                name: "Thermocouple",
+            },
+            {
+                x: x,
+                y: y2,
+                type: "lines",
+                name: "Internal",
+            }
+        ]
+
+        Plotly.react("max31855-plot", data, layout, { responsive: true });
+        ws.send("start: " + sampleTimeMilliseconds.toString());
+    };
+
+    // udpate plot with new data
+    ws.onmessage = function (evt) {
+        var data = JSON.parse(evt.data);
+        var minDate = Date.parse(data.x) - (1000 * timeWindowSeconds);
+        x.push(data.x);
+        y1.push(data.y1);
+        y2.push(data.y2);
+
+        // remove old data points.        
+        for (let index = 0; index < x.length; index++) {
+            if (Date.parse(x[index]) <= minDate) {
+                x.shift();
+                y1.shift();
+                y2.shift();
+            }
+        }
+
+        var plot = [
+            {
+                x: x.slice(), //Plotly.react requires a copy
+                y: y1.slice(),
+                name: "Thermocouple",
+            },
+            {
+                x: x.slice(), //Plotly.react requires a copy
+                y: y2.slice(),
+                name: "Internal",
+            }
+        ]
+        Plotly.react("max31855-plot", plot, layout, { responsive: true });
+    };
+
+    // pause the plot without closing the websocket. //TODO: heartbeat?
+    function pauseButton() {
+        isPaused = !isPaused;
+        var btn = document.getElementById("stopstart");
+        console.log(btn.innerHTML);
+        if (isPaused) {
+            ws.send("stop");
+            btn.innerHTML = "Resume";
+        } else {
+            ws.send("start: " + (sampleTimeMilliseconds).toString());
+            btn.innerHTML = "Pause";
+        }
+    };
+
+    // tell server to change send frequency
+    function updateTimePeriod(val, other) {
+        document.getElementById(other).value = val;
+        sampleTimeMilliseconds = val;
+        ws.send("start: " + sampleTimeMilliseconds.toString());
+    }
+
+    // change time range of X axis
+    function updateTimeWindow(val) {
+        timeWindowSeconds = val;
+    }
+</script>
+
+<body>
+    <div id="max31855-plot" style="width: 100%; height: 90%;"></div>
+
+    <div class="container">
+        <div class="row">
+            <div class="col-sm-2">
+                <p>Data Streaming</p>
+                <button type="button" id="stopstart" onclick="pauseButton();">Pause</button>
+            </div>
+            <div class="col-sm-4">
+                Update rate (ms)&emsp;    
+                <input type="text" id="rangevalue" value="500" onchange="updateTimePeriod(this.value,'updateperiod');">
+                <input type="range" min="100" max="5000" value="500" step="100" class="slider" id="updateperiod"
+                    onchange="updateTimePeriod(this.value,'rangevalue');">
+            </div>
+            <div class="col-sm-6">
+                Time Range (s)&emsp;
+                <input type="text" id="rangevalue" value="60" onchange="updateTimeWindow(this.value);">
+            </div>
+        </div>
+    </div>
+</body>
+
+</html>
